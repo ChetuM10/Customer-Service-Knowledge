@@ -1,0 +1,88 @@
+Module 1 – Customer Management
+Purpose: To store and manage customer information in the Customer Service Platform.
+1. Inputs required
+  When creating a customer using the POST API:
+
+  POST http://localhost:5000/api/customers
+
+	Example JSON:
+{
+  "fullName": "Priya Sharma",
+  "email": "priya.sharma@gmail.com",
+  "phone": "9876543211",
+  "companyName": "Infosys",
+  "servicePlan": "Standard",
+  "accountStatus": "Active"
+}
+
+
+2. Field descriptions
+Field	     Required?	         Description
+fullName	Yes	         Customer's full name
+email	        Yes	         Unique email address
+phone	        Yes	         Customer's phone number
+companyName	No	         Customer's organization
+servicePlan	No	         Basic, Standard or Premium
+accountStatus	No	         Active or Inactive
+
+Automatically generated:
+- customerId – Unique sequential customer ID.
+- _id – MongoDB-generated document ID.
+- createdAt – Customer creation timestamp.
+- updatedAt – Last update timestamp.
+
+
+
+3. Available operations
+Operation	           API
+Create customer        	POST /api/customers
+Get all customers	GET /api/customers
+Get customer by ID	GET /api/customers/:id
+Update customer 	PUT /api/customers/:id
+Delete customer 	DELETE /api/customers/:id
+
+
+
+
+
+Module 2 – Support Request Management
+Purpose: To allow customers to raise support tickets and enable support teams to manage their issues.
+1. Inputs required
+When creating a support ticket:
+
+ 	POST http://localhost:5000/api/support-requests
+
+	Example JSON:
+
+{
+  "customerId": 1003,
+  "subject": "Unable to log in to my account",
+  "description": "I am unable to log in using my registered email and password. The system displays an invalid credentials error.",
+  "priority": "High",
+  "channel": "Web"
+}
+
+
+2. Field descriptions
+Field	      Required?	   Description
+customerId	Yes	   ID of the existing customer
+subject 	Yes	   Short title of the issue
+description	Yes	   Detailed explanation of the issue
+priority	No	   Low, Medium, High or Critical
+channel	        No	   Web, Email or Phone
+
+Automatically generated or assigned:
+- ticketId – Unique sequential ticket ID.
+- customer – MongoDB ObjectId reference to the customer.
+- status – Defaults to Open.
+- createdAt – Ticket creation timestamp.
+- updatedAt – Last update timestamp.
+
+
+3. Available operations
+Operation		API
+Create ticket		POST /api/support-requests
+Get all tickets		GET /api/support-requests
+Get ticket by ID	GET /api/support-requests/:ticketId
+Update ticket		PUT /api/support-requests/:ticketId
+Delete ticket		DELETE /api/support-requests/:ticketId
