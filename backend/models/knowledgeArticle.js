@@ -48,6 +48,11 @@ const knowledgeArticleSchema = new mongoose.Schema(
       default: "Draft",
     },
 
+    currentVersion: {
+      type: Number,
+      default: 1,
+    },
+
     createdBy: {
       type: String,
       required: true,

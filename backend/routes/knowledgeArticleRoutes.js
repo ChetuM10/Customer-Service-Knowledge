@@ -10,6 +10,8 @@ const {
   approveKnowledgeArticle,
   publishKnowledgeArticle,
   retireKnowledgeArticle,
+  getKnowledgeArticleVersions,
+  getSpecificArticleVersion,
 } = require("../controllers/knowledgeArticleController");
 
 // Create Knowledge Article
@@ -32,5 +34,12 @@ router.patch("/:articleId/publish", publishKnowledgeArticle);
 
 // Retire Knowledge Article
 router.patch("/:articleId/retire", retireKnowledgeArticle);
+
+// Get Knowledge Article Version History
+// Get Knowledge Article Version History
+router.get("/:articleId/versions", getKnowledgeArticleVersions);
+
+// Get Specific Knowledge Article Version
+router.get("/:articleId/versions/:versionNumber", getSpecificArticleVersion);
 
 module.exports = router;
