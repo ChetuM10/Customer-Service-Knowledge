@@ -1,8 +1,9 @@
 const SupportRequest = require("../models/supportRequest");
 const Customer = require("../models/customer");
 const Counter = require("../models/counter");
+const { classifyIssue } = require("../services/mlService");
 
-// Create a support ticket
+// Create a support ticket with automatic ML classification
 const createSupportRequest = async (req, res) => {
   try {
     const { customerId, subject, description, priority, channel } = req.body;
@@ -11,6 +12,13 @@ const createSupportRequest = async (req, res) => {
     if (!customerId || !subject || !description) {
       return res.status(400).json({
         message: "Customer ID, subject and description are required",
+      });
+    }
+
+    // Validate customer ID
+    if (!Number.isInteger(Number(customerId)) || Number(customerId) <= 0) {
+      return res.status(400).json({
+        message: "Invalid customer ID",
       });
     }
 
@@ -38,7 +46,40 @@ const createSupportRequest = async (req, res) => {
       });
     }
 
-    // Create support ticket
+    // Default classification if ML service is unavailable
+    let classification = {
+      category: "Needs agent review",
+      modelCategory: null,
+      confidence: 0,
+      categoryProbabilities: {},
+    };
+
+    // Call Python Flask ML service
+    try {
+      const mlResult = await classifyIssue(subject, description);
+
+      if (
+        mlResult.status === "success" &&
+        typeof mlResult.confidence === "number" &&
+        mlResult.confidence >= 0 &&
+        mlResult.confidence <= 1 &&
+        typeof mlResult.model_category === "string" &&
+        typeof mlResult.predicted_category === "string"
+      ) {
+        classification = {
+          category: mlResult.predicted_category,
+          modelCategory: mlResult.model_category,
+          confidence: mlResult.confidence,
+          categoryProbabilities: mlResult.category_probabilities || {},
+        };
+      } else {
+        console.error("Invalid ML response. Manual review required.");
+      }
+    } catch (mlError) {
+      console.error("ML classification failed:", mlError.message);
+    }
+
+    // Create support ticket with classification results
     const supportRequest = await SupportRequest.create({
       ticketId: counter.seq,
       customer: customer._id,
@@ -46,14 +87,21 @@ const createSupportRequest = async (req, res) => {
       description,
       priority,
       channel,
+      ...classification,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Support ticket created successfully",
+      classificationStatus:
+        classification.modelCategory === null
+          ? "Manual review required"
+          : "Classification completed",
       supportRequest,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Create Support Request Error:", error.message);
+
+    return res.status(500).json({
       message: error.message,
     });
   }

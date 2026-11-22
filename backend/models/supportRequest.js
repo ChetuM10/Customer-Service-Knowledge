@@ -26,6 +26,45 @@ const supportRequestSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // ML classification fields
+    category: {
+      type: String,
+      enum: [
+        "Account",
+        "Billing",
+        "Fraud",
+        "General Inquiry",
+        "Technical",
+        "Needs agent review",
+      ],
+      default: "Needs agent review",
+    },
+
+    modelCategory: {
+      type: String,
+      enum: [
+        "Account",
+        "Billing",
+        "Fraud",
+        "General Inquiry",
+        "Technical",
+        null,
+      ],
+      default: null,
+    },
+
+    confidence: {
+      type: Number,
+      min: 0,
+      max: 1,
+      default: 0,
+    },
+
+    categoryProbabilities: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({}),
+    },
+
     priority: {
       type: String,
       enum: ["Low", "Medium", "High", "Critical"],

@@ -3,23 +3,25 @@ const cors = require("cors");
 require("dotenv").config();
 
 const connectDB = require("./config/db");
+
 const customerRoutes = require("./routes/customerRoutes");
 const supportRequestRoutes = require("./routes/supportRequestRoutes");
+const knowledgeCategoryRoutes = require("./routes/knowledgeCategoryRoutes");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// Home route
 app.get("/", (req, res) => {
   res.send("Customer Service Platform Backend is Running!");
 });
 
-// Customer routes
+// API routes
 app.use("/api/customers", customerRoutes);
-
-// Support Request routes
 app.use("/api/support-requests", supportRequestRoutes);
+app.use("/api/knowledge-categories", knowledgeCategoryRoutes);
 
 const startServer = async () => {
   await connectDB();

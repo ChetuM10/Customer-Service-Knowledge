@@ -28,3 +28,15 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+
+
