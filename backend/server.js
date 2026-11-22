@@ -7,6 +7,7 @@ const connectDB = require("./config/db");
 const customerRoutes = require("./routes/customerRoutes");
 const supportRequestRoutes = require("./routes/supportRequestRoutes");
 const knowledgeCategoryRoutes = require("./routes/knowledgeCategoryRoutes");
+const knowledgeArticleRoutes = require("./routes/knowledgeArticleRoutes");
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.get("/", (req, res) => {
 app.use("/api/customers", customerRoutes);
 app.use("/api/support-requests", supportRequestRoutes);
 app.use("/api/knowledge-categories", knowledgeCategoryRoutes);
+app.use("/api/knowledge-articles", knowledgeArticleRoutes);
 
 const startServer = async () => {
   await connectDB();
