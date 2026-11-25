@@ -156,6 +156,27 @@ export default function Layout() {
         <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
           <Outlet />
         </main>
+
+        <footer
+          style={{
+            borderTop: "1px solid var(--border-color)",
+            backgroundColor: "var(--bg-sidebar)",
+            padding: "12px 28px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            fontSize: "12px",
+            color: "var(--text-muted)",
+            flexWrap: "wrap",
+            gap: "8px",
+          }}
+        >
+          <span>
+            © {new Date().getFullYear()} Resolution Hub — Customer Service
+            Knowledge Platform
+          </span>
+          <span>Workspace for your Operations</span>
+        </footer>
       </div>
     </div>
   );
