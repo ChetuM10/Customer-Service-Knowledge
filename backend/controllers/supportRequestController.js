@@ -3,6 +3,11 @@ const Customer = require("../models/customer");
 const Counter = require("../models/counter");
 const { classifyIssue } = require("../services/mlService");
 
+const KnowledgeArticle = require("../models/knowledgeArticle");
+const KnowledgeGap = require("../models/KnowledgeGap");
+
+const { generateResolution } = require("../services/resolutionEngine.cjs");
+
 // Create a support ticket with automatic ML classification
 const createSupportRequest = async (req, res) => {
   try {
@@ -246,10 +251,106 @@ const deleteSupportRequest = async (req, res) => {
   }
 };
 
+// Generate and save an AI-based resolution for a support ticket
+// Automatically create a Knowledge Gap if no relevant article is retrieved
+const generateTicketResolution = async (req, res) => {
+  try {
+    const ticketId = Number(req.params.ticketId);
+
+    // Validate ticket ID
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({
+        message: "Invalid ticket ID",
+      });
+    }
+
+    // Find the support ticket
+    const supportRequest = await SupportRequest.findOne({
+      ticketId: ticketId,
+    });
+
+    if (!supportRequest) {
+      return res.status(404).json({
+        message: "Support ticket not found",
+      });
+    }
+
+    // Fetch only published knowledge articles
+    const knowledgeArticles = await KnowledgeArticle.find({
+      status: "Published",
+    })
+      .populate("category", "categoryName")
+      .lean();
+
+    // Generate resolution using the LLM engine
+    const result = await generateResolution(
+      supportRequest.toObject(),
+      knowledgeArticles,
+    );
+
+    // Get retrieved article IDs
+    const retrievedArticleIds = Array.isArray(result._retrievedArticleIds)
+      ? result._retrievedArticleIds
+      : [];
+
+    // Save generated resolution inside the support ticket
+    supportRequest.resolution = {
+      generatedResolution: result.generatedResolution,
+      troubleshootingSteps: result.troubleshootingSteps,
+      resolutionStatus: result.resolutionStatus,
+      requiresAgent: result.requiresAgent,
+      escalationReason: result.escalationReason,
+      retrievedArticleIds,
+      generatedAt: new Date(),
+    };
+
+    await supportRequest.save();
+
+    let knowledgeGap = null;
+
+    // Automatically create a Knowledge Gap if no article was retrieved
+    if (retrievedArticleIds.length === 0) {
+      // Check whether an active Knowledge Gap already exists
+      knowledgeGap = await KnowledgeGap.findOne({
+        ticketId: ticketId,
+        status: { $nin: ["Resolved", "Closed"] },
+      });
+
+      // Create a new Knowledge Gap if one does not exist
+      if (!knowledgeGap) {
+        knowledgeGap = await KnowledgeGap.create({
+          ticketId: supportRequest.ticketId,
+          issueDescription: supportRequest.description,
+          category: supportRequest.modelCategory || supportRequest.category,
+          reason:
+            result.escalationReason ||
+            "No relevant published knowledge article was found for this issue.",
+          priority: supportRequest.priority || "Medium",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      message: "Resolution generated and saved successfully",
+      ticketId: supportRequest.ticketId,
+      resolution: supportRequest.resolution,
+      knowledgeGap,
+    });
+  } catch (error) {
+    console.error("Generate Resolution Error:", error.message);
+
+    return res.status(500).json({
+      message: "Failed to generate ticket resolution",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createSupportRequest,
   getSupportRequests,
   getSupportRequestById,
   updateSupportRequest,
   deleteSupportRequest,
+  generateTicketResolution,
 };

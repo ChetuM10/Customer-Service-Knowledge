@@ -26,7 +26,6 @@ const supportRequestSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ML classification fields
     category: {
       type: String,
       enum: [
@@ -82,10 +81,58 @@ const supportRequestSchema = new mongoose.Schema(
       enum: ["Web", "Email", "Phone"],
       default: "Web",
     },
+
+    // AI-generated resolution
+    resolution: {
+      generatedResolution: {
+        type: String,
+        default: null,
+      },
+
+      troubleshootingSteps: {
+        type: [String],
+        default: [],
+      },
+
+      resolutionStatus: {
+        type: String,
+        enum: [
+          "Generated",
+          "NeedsClarification",
+          "Escalated",
+          "In Progress",
+          "Resolved",
+          "Rejected",
+          null,
+        ],
+        default: null,
+      },
+      requiresAgent: {
+        type: Boolean,
+        default: false,
+      },
+
+      escalationReason: {
+        type: String,
+        default: null,
+      },
+
+      retrievedArticleIds: {
+        type: [String],
+        default: [],
+      },
+
+      generatedAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
   },
 );
 
-module.exports = mongoose.model("SupportRequest", supportRequestSchema);
+module.exports =
+  mongoose.models.SupportRequest ||
+  mongoose.model("SupportRequest", supportRequestSchema);
