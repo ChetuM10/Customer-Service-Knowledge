@@ -84,3 +84,88 @@ Renders the persistent dashboard skeleton: a left **Sidebar** (brand + 4 module 
 2. **Why `NavLink` instead of `<a href="...">`?**  
    *Answer:* `<a href>` triggers a full browser page reload and loses React state; `NavLink` swaps views client-side and automatically provides `isActive` for styling the active menu item.
 
+---
+
+## 📄 File 4: `src/services/api.js` — Centralized Axios API Client
+
+### 1. What It Does
+Creates a single, pre-configured Axios instance pointing to `http://localhost:5000/api` and exports clean helper functions for all 4 backend route groups (Customers, Support Requests, Knowledge Categories, and Knowledge Articles + Versions).
+
+### 2. Imports
+- `axios` from `'axios'` — promise-based HTTP client for making `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests to the Express backend.
+
+### 3. Event & Flow Tracing (How a Page Calls the Backend)
+1. A React page calls a helper like `await customerAPI.getAll()` or `await ticketAPI.create(formData)`.
+2. Axios combines `baseURL` (`http://localhost:5000/api`) with the endpoint path (e.g., `/support-requests`).
+3. Axios automatically serializes JS objects to JSON and sets `Content-Type: application/json`.
+4. The Express backend handles the request (and for new tickets, calls the Python Flask ML service on port 5001) and returns JSON.
+5. The React component receives the response inside `try/catch` and updates local state.
+
+### 4. Interview Corner
+1. **Why create a centralized `api.js` with `axios.create({ baseURL })` instead of calling `axios.get('http://localhost:5000/api/...')` in every component?**  
+   *Answer:* Single Source of Truth—if the backend URL changes in production, you update one line in `api.js` instead of 20+ files. It also lets you attach global headers or auth interceptors in one place.
+2. **Why does Knowledge Article update use `PATCH` while Customer/Ticket updates use `PUT`?**  
+   *Answer:* Our backend routes explicitly define `router.patch('/:articleId', ...)` for partial updates and lifecycle transitions (`/approve`, `/publish`, `/retire`), whereas `customerRoutes.js` and `supportRequestRoutes.js` use `router.put(...)`. Matching the exact HTTP method prevents `404 Cannot PATCH/PUT` errors.
+
+---
+
+## 📄 File 5: `src/components/StatusBadge.jsx` — Reusable Status & Category Pill
+
+### 1. What It Does
+Renders a small color-coded pill badge (like the status pills in the reference dashboard) for any status, priority, service plan, or ML-predicted category across all 4 modules.
+
+### 2. Imports
+None (pure presentational React component receiving `label` as a prop).
+
+### 3. Event & Flow Tracing
+1. A parent page (e.g., `CustomersPage` or `TicketsPage`) passes a string prop: `<StatusBadge label={ticket.status} />`.
+2. `StatusBadge` looks up `label` in the `COLOR_MAP` dictionary to pick matching text, background, and border colors.
+3. If `label` is unknown or custom, it safely falls back to a neutral gray pill style (`DEFAULT_STYLE`) instead of crashing.
+
+### 4. Interview Corner
+1. **Why use a lookup object (`COLOR_MAP[label]`) instead of a long `if / else if` or `switch` chain?**  
+   *Answer:* A lookup map gives $O(1)$ constant-time access, avoids repetitive JSX, and makes adding a new status as simple as adding one line to the dictionary.
+2. **What is a "presentational" (dumb) component in React?**  
+   *Answer:* A component that has no internal state or API calls—it only takes `props` in and returns UI out, making it super easy to reuse and test.
+
+---
+
+## 📄 File 6: `src/pages/CustomersPage.jsx` — Module 1 (Customer Management)
+
+### 1. What It Does
+Full CRUD screen for **Module 1 (Customer Management)**: displays summary stat cards, a live search bar, a shadow-styled customer table, and a single reusable modal form for creating or editing a customer, plus delete confirmation.
+
+### 2. Imports
+- `useState`, `useEffect` (`react`) — manages customers list, loading/error states, search text, modal open/close, and controlled form inputs.
+- `customerAPI` (`../services/api`) — calls `getAll`, `create`, `update`, and `delete` against `/api/customers`.
+- `StatusBadge` (`../components/StatusBadge`) — renders colored pills for `servicePlan` and `accountStatus`.
+
+### 3. Event & Flow Tracing
+- **Page Load (`useEffect`):**
+  1. `fetchCustomers()` runs once on mount (`[]` dependency array).
+  2. Sets `loading = true`, `error = ''`.
+  3. Calls `GET http://localhost:5000/api/customers` via `customerAPI.getAll()`.
+  4. On success: stores `res.data` array in `customers` state; React re-renders the stat cards and table.
+  5. On failure (e.g., backend offline): catches error, displays a readable red error banner with a **Retry** button.
+- **Create / Edit Submit (`handleSubmit`):**
+  1. `e.preventDefault()` stops browser page refresh.
+  2. Sets `saving = true`.
+  3. If `editingId` is `null` → calls `POST /api/customers` with `formData`. If `editingId` has a `customerId` → calls `PUT /api/customers/${editingId}`.
+  4. Backend validates, updates MongoDB, and returns the saved customer.
+  5. Closes modal and calls `fetchCustomers()` to refresh the table with the latest database state.
+- **Delete (`handleDelete`):**
+  1. Confirms with user via `window.confirm`.
+  2. Calls `DELETE /api/customers/${customerId}`.
+  3. Removes deleted customer from local state immediately (or re-fetches).
+
+### 4. Interview Corner
+1. **Why use controlled inputs (`value={formData.fullName}` + `onChange`) instead of uncontrolled inputs (`useRef`)?**  
+   *Answer:* Controlled inputs keep React state as the single source of truth, making it effortless to pre-fill the form when editing an existing customer and reset fields when opening a blank Create form.
+2. **Why do we handle `loading`, `error`, and `empty` states explicitly?**  
+   *Answer:* Real network requests can be slow or fail. Explicit async states prevent blank screens, give users clear feedback when the backend is down, and avoid crashes like `.map()` on `undefined`.
+3. **Why did we pass `customer.customerId` (e.g., `1001`) instead of `customer._id` to `update` and `delete`?**  
+   *Answer:* Our Express `customerController.js` queries by `{ customerId: Number(req.params.id) }`, not MongoDB's ObjectId `_id`.
+
+
+
+
