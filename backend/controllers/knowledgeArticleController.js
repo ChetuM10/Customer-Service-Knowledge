@@ -2,6 +2,16 @@ const KnowledgeArticle = require("../models/knowledgeArticle");
 const KnowledgeCategory = require("../models/knowledgeCategory");
 const Counter = require("../models/counter");
 const KnowledgeArticleVersion = require("../models/knowledgeArticleVersion");
+const { createAuditLog } = require("../services/auditService");
+
+// Reusable audit logging function
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Knowledge Article audit recording failed:", error.message);
+  }
+};
 
 // 1. Create Knowledge Article
 const createKnowledgeArticle = async (req, res) => {
@@ -69,10 +79,25 @@ const createKnowledgeArticle = async (req, res) => {
         changeDescription: "Initial article creation",
       });
     } catch (versionError) {
-      // Remove article if version creation fails
       await KnowledgeArticle.findByIdAndDelete(article._id);
       throw versionError;
     }
+
+    // Record article creation in audit history
+    await recordAudit({
+      action: "Created",
+      entityType: "KnowledgeArticle",
+      entityId: article.articleId,
+      performedBy: createdBy || "System",
+      description: `Knowledge article ${article.articleId} created`,
+      newData: {
+        articleId: article.articleId,
+        title: article.title,
+        category: article.category,
+        status: article.status,
+        currentVersion: article.currentVersion,
+      },
+    });
 
     return res.status(201).json({
       message: "Knowledge article created successfully",
@@ -165,6 +190,9 @@ const updateKnowledgeArticle = async (req, res) => {
       });
     }
 
+    // Capture previous article data for audit history
+    const previousData = existingArticle.toObject();
+
     // Validate updated category
     if (category !== undefined) {
       const existingCategory =
@@ -209,6 +237,11 @@ const updateKnowledgeArticle = async (req, res) => {
       updateData.applicableProduct = applicableProduct;
     }
 
+    // Published articles must go through approval again after editing
+    if (existingArticle.status === "Published") {
+      updateData.status = "Draft";
+    }
+
     if (Object.keys(updateData).length === 0) {
       await session.abortTransaction();
 
@@ -248,6 +281,7 @@ const updateKnowledgeArticle = async (req, res) => {
     }
 
     // Deactivate previous active version
+    // The previous version retains its original status
     await KnowledgeArticleVersion.updateMany(
       {
         articleId,
@@ -284,6 +318,35 @@ const updateKnowledgeArticle = async (req, res) => {
 
     // Commit transaction
     await session.commitTransaction();
+
+    // Record article update in audit history
+    await recordAudit({
+      action: "Updated",
+      entityType: "KnowledgeArticle",
+      entityId: updatedArticle.articleId,
+      performedBy: updatedBy,
+      description: `Knowledge article ${articleId} updated to version ${newVersionNumber}`,
+      previousData: {
+        title: previousData.title,
+        problemDescription: previousData.problemDescription,
+        category: previousData.category,
+        troubleshootingSteps: previousData.troubleshootingSteps,
+        solution: previousData.solution,
+        applicableProduct: previousData.applicableProduct,
+        status: previousData.status,
+        currentVersion: previousData.currentVersion,
+      },
+      newData: {
+        title: updatedArticle.title,
+        problemDescription: updatedArticle.problemDescription,
+        category: updatedArticle.category,
+        troubleshootingSteps: updatedArticle.troubleshootingSteps,
+        solution: updatedArticle.solution,
+        applicableProduct: updatedArticle.applicableProduct,
+        status: updatedArticle.status,
+        currentVersion: updatedArticle.currentVersion,
+      },
+    });
 
     await updatedArticle.populate("category", "categoryId categoryName");
 
@@ -353,6 +416,13 @@ const updateKnowledgeArticleStatus = async (
       });
     }
 
+    // Capture previous article status for audit history
+    const previousData = {
+      articleId: article.articleId,
+      status: article.status,
+      currentVersion: article.currentVersion,
+    };
+
     // Update main article
     const updatedArticle = await KnowledgeArticle.findOneAndUpdate(
       {
@@ -401,6 +471,30 @@ const updateKnowledgeArticleStatus = async (
 
     // Commit transaction
     await session.commitTransaction();
+
+    // Determine the appropriate audit action
+    let auditAction = "Status Changed";
+
+    if (newStatus === "Published") {
+      auditAction = "Article Published";
+    } else if (newStatus === "Retired") {
+      auditAction = "Article Retired";
+    }
+
+    // Record article status change in audit history
+    await recordAudit({
+      action: auditAction,
+      entityType: "KnowledgeArticle",
+      entityId: updatedArticle.articleId,
+      performedBy: updatedBy.trim(),
+      description: `Knowledge article ${articleId} status changed from ${currentStatus} to ${newStatus}`,
+      previousData,
+      newData: {
+        articleId: updatedArticle.articleId,
+        status: updatedArticle.status,
+        currentVersion: updatedArticle.currentVersion,
+      },
+    });
 
     await updatedArticle.populate("category", "categoryId categoryName");
 
@@ -454,7 +548,6 @@ const getKnowledgeArticleVersions = async (req, res) => {
   try {
     const { articleId } = req.params;
 
-    // Check whether article exists
     const article = await KnowledgeArticle.findOne({ articleId });
 
     if (!article) {
@@ -463,7 +556,6 @@ const getKnowledgeArticleVersions = async (req, res) => {
       });
     }
 
-    // Retrieve all versions
     const versions = await KnowledgeArticleVersion.find({
       articleId,
     })
@@ -488,7 +580,6 @@ const getSpecificArticleVersion = async (req, res) => {
   try {
     const { articleId, versionNumber } = req.params;
 
-    // Validate version number
     const parsedVersionNumber = Number(versionNumber);
 
     if (!Number.isInteger(parsedVersionNumber) || parsedVersionNumber < 1) {
@@ -497,7 +588,6 @@ const getSpecificArticleVersion = async (req, res) => {
       });
     }
 
-    // Find requested version
     const version = await KnowledgeArticleVersion.findOne({
       articleId,
       versionNumber: parsedVersionNumber,

@@ -1,5 +1,15 @@
 const KnowledgeGap = require("../models/KnowledgeGap");
 const SupportRequest = require("../models/supportRequest");
+const { createAuditLog } = require("../services/auditService");
+
+// Helper to record audit history without interrupting the main operation
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Knowledge Gap audit recording failed:", error.message);
+  }
+};
 
 // 1. Create knowledge gap using an existing support ticket
 exports.createKnowledgeGap = async (req, res) => {
@@ -38,6 +48,25 @@ exports.createKnowledgeGap = async (req, res) => {
     });
 
     await knowledgeGap.save();
+
+    // Record audit history
+    await recordAudit({
+      action: "Created",
+      entityType: "KnowledgeGap",
+      entityId: knowledgeGap.gapId,
+      ticketId: knowledgeGap.ticketId,
+      performedBy: req.body.performedBy || "System",
+      description: `Knowledge gap ${knowledgeGap.gapId} created for ticket ${knowledgeGap.ticketId}`,
+      newData: {
+        gapId: knowledgeGap.gapId,
+        ticketId: knowledgeGap.ticketId,
+        issueDescription: knowledgeGap.issueDescription,
+        category: knowledgeGap.category,
+        reason: knowledgeGap.reason,
+        priority: knowledgeGap.priority,
+        status: knowledgeGap.status,
+      },
+    });
 
     return res.status(201).json({
       message: "Knowledge gap created successfully",
@@ -133,6 +162,18 @@ exports.updateKnowledgeGap = async (req, res) => {
       });
     }
 
+    // Capture previous values before updating
+    const previousData = {
+      gapId: knowledgeGap.gapId,
+      ticketId: knowledgeGap.ticketId,
+      issueDescription: knowledgeGap.issueDescription,
+      category: knowledgeGap.category,
+      reason: knowledgeGap.reason,
+      priority: knowledgeGap.priority,
+      status: knowledgeGap.status,
+      resolvedAt: knowledgeGap.resolvedAt,
+    };
+
     if (reason !== undefined) {
       knowledgeGap.reason = reason;
     }
@@ -153,6 +194,34 @@ exports.updateKnowledgeGap = async (req, res) => {
 
     await knowledgeGap.save();
 
+    // Capture updated values
+    const newData = {
+      gapId: knowledgeGap.gapId,
+      ticketId: knowledgeGap.ticketId,
+      issueDescription: knowledgeGap.issueDescription,
+      category: knowledgeGap.category,
+      reason: knowledgeGap.reason,
+      priority: knowledgeGap.priority,
+      status: knowledgeGap.status,
+      resolvedAt: knowledgeGap.resolvedAt,
+    };
+
+    const statusChanged = previousData.status !== newData.status;
+
+    // Record audit history
+    await recordAudit({
+      action: statusChanged ? "Status Changed" : "Updated",
+      entityType: "KnowledgeGap",
+      entityId: knowledgeGap.gapId,
+      ticketId: knowledgeGap.ticketId,
+      performedBy: req.body.performedBy || "System",
+      description: statusChanged
+        ? `Knowledge gap ${knowledgeGap.gapId} status changed from ${previousData.status} to ${newData.status}`
+        : `Knowledge gap ${knowledgeGap.gapId} updated`,
+      previousData,
+      newData,
+    });
+
     return res.status(200).json({
       message: "Knowledge gap updated successfully",
       knowledgeGap,
@@ -168,7 +237,7 @@ exports.updateKnowledgeGap = async (req, res) => {
 // 5. Delete knowledge gap
 exports.deleteKnowledgeGap = async (req, res) => {
   try {
-    const knowledgeGap = await KnowledgeGap.findOneAndDelete({
+    const knowledgeGap = await KnowledgeGap.findOne({
       gapId: req.params.gapId,
     });
 
@@ -177,6 +246,30 @@ exports.deleteKnowledgeGap = async (req, res) => {
         message: "Knowledge gap not found",
       });
     }
+
+    // Delete the knowledge gap
+    await KnowledgeGap.findOneAndDelete({
+      gapId: req.params.gapId,
+    });
+
+    // Record audit history
+    await recordAudit({
+      action: "Deleted",
+      entityType: "KnowledgeGap",
+      entityId: knowledgeGap.gapId,
+      ticketId: knowledgeGap.ticketId,
+      performedBy: req.body.performedBy || "System",
+      description: `Knowledge gap ${knowledgeGap.gapId} deleted`,
+      previousData: {
+        gapId: knowledgeGap.gapId,
+        ticketId: knowledgeGap.ticketId,
+        issueDescription: knowledgeGap.issueDescription,
+        category: knowledgeGap.category,
+        reason: knowledgeGap.reason,
+        priority: knowledgeGap.priority,
+        status: knowledgeGap.status,
+      },
+    });
 
     return res.status(200).json({
       message: "Knowledge gap deleted successfully",

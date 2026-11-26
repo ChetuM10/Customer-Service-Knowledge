@@ -1,33 +1,41 @@
 const SupportRequest = require("../models/supportRequest");
 const Customer = require("../models/customer");
 const Counter = require("../models/counter");
-const { classifyIssue } = require("../services/mlService");
 
-const KnowledgeArticle = require("../models/knowledgeArticle");
+const { classifyIssue } = require("../services/classificationEngine.cjs");
+
+const KnowledgeArticleVersion = require("../models/knowledgeArticleVersion");
 const KnowledgeGap = require("../models/KnowledgeGap");
 
 const { generateResolution } = require("../services/resolutionEngine.cjs");
+const { createAuditLog } = require("../services/auditService");
 
-// Create a support ticket with automatic ML classification
+// Safely record audit history without interrupting the main operation
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Audit recording failed:", error.message);
+  }
+};
+
+// Create a support ticket with automatic Gemini classification
 const createSupportRequest = async (req, res) => {
   try {
     const { customerId, subject, description, priority, channel } = req.body;
 
-    // Check required fields
     if (!customerId || !subject || !description) {
       return res.status(400).json({
         message: "Customer ID, subject and description are required",
       });
     }
 
-    // Validate customer ID
     if (!Number.isInteger(Number(customerId)) || Number(customerId) <= 0) {
       return res.status(400).json({
         message: "Invalid customer ID",
       });
     }
 
-    // Find customer using custom customer ID
     const customer = await Customer.findOne({
       customerId: Number(customerId),
     });
@@ -38,7 +46,6 @@ const createSupportRequest = async (req, res) => {
       });
     }
 
-    // Generate unique ticket ID
     const counter = await Counter.findByIdAndUpdate(
       "ticketId",
       { $inc: { seq: 1 } },
@@ -51,7 +58,6 @@ const createSupportRequest = async (req, res) => {
       });
     }
 
-    // Default classification if ML service is unavailable
     let classification = {
       category: "Needs agent review",
       modelCategory: null,
@@ -59,32 +65,38 @@ const createSupportRequest = async (req, res) => {
       categoryProbabilities: {},
     };
 
-    // Call Python Flask ML service
+    let classificationReason = null;
+
     try {
-      const mlResult = await classifyIssue(subject, description);
+      const classificationResult = await classifyIssue(subject, description);
 
       if (
-        mlResult.status === "success" &&
-        typeof mlResult.confidence === "number" &&
-        mlResult.confidence >= 0 &&
-        mlResult.confidence <= 1 &&
-        typeof mlResult.model_category === "string" &&
-        typeof mlResult.predicted_category === "string"
+        classificationResult.status === "success" &&
+        typeof classificationResult.confidence === "number" &&
+        classificationResult.confidence >= 0 &&
+        classificationResult.confidence <= 1 &&
+        typeof classificationResult.model_category === "string" &&
+        typeof classificationResult.predicted_category === "string"
       ) {
         classification = {
-          category: mlResult.predicted_category,
-          modelCategory: mlResult.model_category,
-          confidence: mlResult.confidence,
-          categoryProbabilities: mlResult.category_probabilities || {},
+          category: classificationResult.predicted_category,
+          modelCategory: classificationResult.model_category,
+          confidence: classificationResult.confidence,
+          categoryProbabilities:
+            classificationResult.category_probabilities || {},
         };
+
+        classificationReason = classificationResult.reason || null;
       } else {
-        console.error("Invalid ML response. Manual review required.");
+        console.error("Invalid Gemini response. Manual review required.");
       }
-    } catch (mlError) {
-      console.error("ML classification failed:", mlError.message);
+    } catch (classificationError) {
+      console.error(
+        "Gemini classification failed:",
+        classificationError.message,
+      );
     }
 
-    // Create support ticket with classification results
     const supportRequest = await SupportRequest.create({
       ticketId: counter.seq,
       customer: customer._id,
@@ -95,10 +107,43 @@ const createSupportRequest = async (req, res) => {
       ...classification,
     });
 
+    await recordAudit({
+      action: "Created",
+      entityType: "SupportRequest",
+      entityId: supportRequest.ticketId,
+      ticketId: supportRequest.ticketId,
+      description: `Support ticket ${supportRequest.ticketId} created`,
+      newData: {
+        subject: supportRequest.subject,
+        description: supportRequest.description,
+        category: supportRequest.category,
+        priority: supportRequest.priority,
+        channel: supportRequest.channel,
+      },
+    });
+
+    await recordAudit({
+      action: "Classified",
+      entityType: "SupportRequest",
+      entityId: supportRequest.ticketId,
+      ticketId: supportRequest.ticketId,
+      description:
+        classification.category === "Needs agent review"
+          ? "Gemini classification confidence was below the required threshold or classification was unavailable. Manual review required."
+          : `Ticket classified as ${classification.category} by Gemini`,
+      newData: {
+        category: classification.category,
+        modelCategory: classification.modelCategory,
+        confidence: classification.confidence,
+        categoryProbabilities: classification.categoryProbabilities,
+        reason: classificationReason,
+      },
+    });
+
     return res.status(201).json({
       message: "Support ticket created successfully",
       classificationStatus:
-        classification.modelCategory === null
+        classification.category === "Needs agent review"
           ? "Manual review required"
           : "Classification completed",
       supportRequest,
@@ -142,7 +187,7 @@ const getSupportRequestById = async (req, res) => {
     }
 
     const supportRequest = await SupportRequest.findOne({
-      ticketId: ticketId,
+      ticketId,
     }).populate("customer", "customerId fullName email");
 
     if (!supportRequest) {
@@ -170,7 +215,6 @@ const updateSupportRequest = async (req, res) => {
       });
     }
 
-    // Only allow specific fields to be updated
     const allowedFields = [
       "subject",
       "description",
@@ -193,8 +237,24 @@ const updateSupportRequest = async (req, res) => {
       });
     }
 
+    const previousRequest = await SupportRequest.findOne({ ticketId });
+
+    if (!previousRequest) {
+      return res.status(404).json({
+        message: "Support ticket not found",
+      });
+    }
+
+    const previousData = {
+      subject: previousRequest.subject,
+      description: previousRequest.description,
+      priority: previousRequest.priority,
+      status: previousRequest.status,
+      channel: previousRequest.channel,
+    };
+
     const supportRequest = await SupportRequest.findOneAndUpdate(
-      { ticketId: ticketId },
+      { ticketId },
       updateData,
       {
         returnDocument: "after",
@@ -202,11 +262,27 @@ const updateSupportRequest = async (req, res) => {
       },
     ).populate("customer", "customerId fullName email");
 
-    if (!supportRequest) {
-      return res.status(404).json({
-        message: "Support ticket not found",
-      });
-    }
+    const newData = {
+      subject: supportRequest.subject,
+      description: supportRequest.description,
+      priority: supportRequest.priority,
+      status: supportRequest.status,
+      channel: supportRequest.channel,
+    };
+
+    const statusChanged = previousData.status !== newData.status;
+
+    await recordAudit({
+      action: statusChanged ? "Status Changed" : "Updated",
+      entityType: "SupportRequest",
+      entityId: ticketId,
+      ticketId,
+      description: statusChanged
+        ? `Ticket status changed from ${previousData.status} to ${newData.status}`
+        : `Support ticket ${ticketId} updated`,
+      previousData,
+      newData,
+    });
 
     res.status(200).json({
       message: "Support ticket updated successfully",
@@ -231,7 +307,7 @@ const deleteSupportRequest = async (req, res) => {
     }
 
     const supportRequest = await SupportRequest.findOneAndDelete({
-      ticketId: ticketId,
+      ticketId,
     });
 
     if (!supportRequest) {
@@ -239,6 +315,21 @@ const deleteSupportRequest = async (req, res) => {
         message: "Support ticket not found",
       });
     }
+
+    await recordAudit({
+      action: "Deleted",
+      entityType: "SupportRequest",
+      entityId: ticketId,
+      ticketId,
+      description: `Support ticket ${ticketId} deleted`,
+      previousData: {
+        subject: supportRequest.subject,
+        description: supportRequest.description,
+        category: supportRequest.category,
+        priority: supportRequest.priority,
+        status: supportRequest.status,
+      },
+    });
 
     res.status(200).json({
       message: "Support ticket deleted successfully",
@@ -251,22 +342,43 @@ const deleteSupportRequest = async (req, res) => {
   }
 };
 
+// Retrieve the latest Published version of every knowledge article
+const getPublishedKnowledgeArticles = async () => {
+  const publishedVersions = await KnowledgeArticleVersion.find({
+    status: "Published",
+  })
+    .populate("category", "categoryName")
+    .sort({
+      articleId: 1,
+      versionNumber: -1,
+    })
+    .lean();
+
+  const latestPublishedVersions = new Map();
+
+  for (const version of publishedVersions) {
+    if (!latestPublishedVersions.has(version.articleId)) {
+      latestPublishedVersions.set(version.articleId, version);
+    }
+  }
+
+  return Array.from(latestPublishedVersions.values());
+};
+
 // Generate and save an AI-based resolution for a support ticket
 // Automatically create a Knowledge Gap if no relevant article is retrieved
 const generateTicketResolution = async (req, res) => {
   try {
     const ticketId = Number(req.params.ticketId);
 
-    // Validate ticket ID
     if (!Number.isInteger(ticketId) || ticketId <= 0) {
       return res.status(400).json({
         message: "Invalid ticket ID",
       });
     }
 
-    // Find the support ticket
     const supportRequest = await SupportRequest.findOne({
-      ticketId: ticketId,
+      ticketId,
     });
 
     if (!supportRequest) {
@@ -275,25 +387,43 @@ const generateTicketResolution = async (req, res) => {
       });
     }
 
-    // Fetch only published knowledge articles
-    const knowledgeArticles = await KnowledgeArticle.find({
-      status: "Published",
-    })
-      .populate("category", "categoryName")
-      .lean();
+    const previousResolution = supportRequest.resolution
+      ? supportRequest.resolution.toObject
+        ? supportRequest.resolution.toObject()
+        : { ...supportRequest.resolution }
+      : null;
 
-    // Generate resolution using the LLM engine
+    // Retrieve the latest Published version of each knowledge article
+    const knowledgeArticles = await getPublishedKnowledgeArticles();
+
+    // Generate resolution using the retrieved published versions
     const result = await generateResolution(
       supportRequest.toObject(),
       knowledgeArticles,
     );
 
-    // Get retrieved article IDs
     const retrievedArticleIds = Array.isArray(result._retrievedArticleIds)
       ? result._retrievedArticleIds
       : [];
 
-    // Save generated resolution inside the support ticket
+    // Store the exact article versions used by the resolution engine
+    const retrievedArticleVersions = Array.isArray(
+      result._retrievedArticleVersions,
+    )
+      ? result._retrievedArticleVersions
+          .filter(
+            (item) =>
+              item &&
+              typeof item.articleId === "string" &&
+              Number.isInteger(item.versionNumber) &&
+              item.versionNumber >= 1,
+          )
+          .map((item) => ({
+            articleId: item.articleId,
+            versionNumber: item.versionNumber,
+          }))
+      : [];
+
     supportRequest.resolution = {
       generatedResolution: result.generatedResolution,
       troubleshootingSteps: result.troubleshootingSteps,
@@ -301,22 +431,38 @@ const generateTicketResolution = async (req, res) => {
       requiresAgent: result.requiresAgent,
       escalationReason: result.escalationReason,
       retrievedArticleIds,
+      retrievedArticleVersions,
       generatedAt: new Date(),
     };
 
     await supportRequest.save();
 
+    await recordAudit({
+      action: "Resolution Generated",
+      entityType: "SupportRequest",
+      entityId: ticketId,
+      ticketId,
+      description: `AI resolution generated for support ticket ${ticketId}`,
+      previousData: previousResolution,
+      newData: {
+        generatedResolution: result.generatedResolution,
+        troubleshootingSteps: result.troubleshootingSteps,
+        resolutionStatus: result.resolutionStatus,
+        requiresAgent: result.requiresAgent,
+        escalationReason: result.escalationReason,
+        retrievedArticleIds,
+        retrievedArticleVersions,
+      },
+    });
+
     let knowledgeGap = null;
 
-    // Automatically create a Knowledge Gap if no article was retrieved
     if (retrievedArticleIds.length === 0) {
-      // Check whether an active Knowledge Gap already exists
       knowledgeGap = await KnowledgeGap.findOne({
-        ticketId: ticketId,
+        ticketId,
         status: { $nin: ["Resolved", "Closed"] },
       });
 
-      // Create a new Knowledge Gap if one does not exist
       if (!knowledgeGap) {
         knowledgeGap = await KnowledgeGap.create({
           ticketId: supportRequest.ticketId,
@@ -326,6 +472,22 @@ const generateTicketResolution = async (req, res) => {
             result.escalationReason ||
             "No relevant published knowledge article was found for this issue.",
           priority: supportRequest.priority || "Medium",
+        });
+
+        await recordAudit({
+          action: "Knowledge Gap Created",
+          entityType: "KnowledgeGap",
+          entityId: knowledgeGap.gapId,
+          ticketId,
+          description: `Knowledge gap ${knowledgeGap.gapId} automatically created for ticket ${ticketId}`,
+          newData: {
+            gapId: knowledgeGap.gapId,
+            issueDescription: knowledgeGap.issueDescription,
+            category: knowledgeGap.category,
+            reason: knowledgeGap.reason,
+            priority: knowledgeGap.priority,
+            status: knowledgeGap.status,
+          },
         });
       }
     }

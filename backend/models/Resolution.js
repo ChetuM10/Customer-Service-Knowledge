@@ -1,5 +1,24 @@
 const mongoose = require("mongoose");
 
+// Stores the exact knowledge article version used by the AI resolution.
+const retrievedArticleVersionSchema = new mongoose.Schema(
+  {
+    articleId: {
+      type: String,
+      required: true,
+    },
+
+    versionNumber: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+  },
+  {
+    _id: false,
+  },
+);
+
 const resolutionSchema = new mongoose.Schema(
   {
     resolutionId: {
@@ -55,6 +74,12 @@ const resolutionSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Exact article versions used to generate this resolution.
+    retrievedArticleVersions: {
+      type: [retrievedArticleVersionSchema],
+      default: [],
+    },
+
     resolvedBy: {
       type: String,
       default: null,
@@ -85,4 +110,5 @@ resolutionSchema.pre("validate", async function () {
   }
 });
 
-module.exports = mongoose.model("Resolution", resolutionSchema);
+module.exports =
+  mongoose.models.Resolution || mongoose.model("Resolution", resolutionSchema);

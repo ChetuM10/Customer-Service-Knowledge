@@ -1,19 +1,35 @@
 const KnowledgeCategory = require("../models/knowledgeCategory");
 const Counter = require("../models/counter");
+const { createAuditLog } = require("../services/auditService");
+
+// Safely record audit history
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Knowledge Category audit recording failed:", error.message);
+  }
+};
+
+// Prepare category data for audit history
+const getCategoryAuditData = (category) => ({
+  categoryId: category.categoryId,
+  categoryName: category.categoryName,
+  description: category.description,
+  isActive: category.isActive,
+});
 
 // 1. Create Knowledge Category
 const createKnowledgeCategory = async (req, res) => {
   try {
     const { categoryName, description } = req.body;
 
-    // Validate required field
     if (!categoryName || !categoryName.trim()) {
       return res.status(400).json({
         message: "Category name is required",
       });
     }
 
-    // Check whether category already exists
     const existingCategory = await KnowledgeCategory.findOne({
       categoryName: categoryName.trim(),
     });
@@ -24,7 +40,6 @@ const createKnowledgeCategory = async (req, res) => {
       });
     }
 
-    // Generate unique category ID
     const counter = await Counter.findByIdAndUpdate(
       "categoryId",
       { $inc: { seq: 1 } },
@@ -39,11 +54,19 @@ const createKnowledgeCategory = async (req, res) => {
 
     const categoryId = `CAT-${counter.seq}`;
 
-    // Create category
     const newCategory = await KnowledgeCategory.create({
       categoryId,
       categoryName: categoryName.trim(),
       description: description?.trim() || "",
+    });
+
+    await recordAudit({
+      action: "Created",
+      entityType: "KnowledgeCategory",
+      entityId: categoryId,
+      performedBy: req.body.performedBy || "System",
+      description: `Knowledge category ${categoryId} created`,
+      newData: getCategoryAuditData(newCategory),
     });
 
     return res.status(201).json({
@@ -115,24 +138,20 @@ const updateKnowledgeCategory = async (req, res) => {
     const { categoryId } = req.params;
 
     const allowedFields = ["categoryName", "description", "isActive"];
-
     const updateData = {};
 
-    // Accept only permitted fields
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         updateData[field] = req.body[field];
       }
     }
 
-    // Check whether any valid field was provided
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         message: "No valid fields provided for update",
       });
     }
 
-    // Validate category name if provided
     if (
       updateData.categoryName !== undefined &&
       (typeof updateData.categoryName !== "string" ||
@@ -143,7 +162,6 @@ const updateKnowledgeCategory = async (req, res) => {
       });
     }
 
-    // Trim string fields
     if (updateData.categoryName !== undefined) {
       updateData.categoryName = updateData.categoryName.trim();
     }
@@ -158,7 +176,6 @@ const updateKnowledgeCategory = async (req, res) => {
       updateData.description = updateData.description.trim();
     }
 
-    // Validate isActive
     if (
       updateData.isActive !== undefined &&
       typeof updateData.isActive !== "boolean"
@@ -168,7 +185,6 @@ const updateKnowledgeCategory = async (req, res) => {
       });
     }
 
-    // Check for duplicate category name
     if (updateData.categoryName) {
       const existingCategory = await KnowledgeCategory.findOne({
         categoryName: updateData.categoryName,
@@ -182,6 +198,18 @@ const updateKnowledgeCategory = async (req, res) => {
       }
     }
 
+    const existingCategory = await KnowledgeCategory.findOne({
+      categoryId,
+    });
+
+    if (!existingCategory) {
+      return res.status(404).json({
+        message: "Knowledge category not found",
+      });
+    }
+
+    const previousData = getCategoryAuditData(existingCategory);
+
     const updatedCategory = await KnowledgeCategory.findOneAndUpdate(
       { categoryId },
       { $set: updateData },
@@ -191,11 +219,23 @@ const updateKnowledgeCategory = async (req, res) => {
       },
     );
 
-    if (!updatedCategory) {
-      return res.status(404).json({
-        message: "Knowledge category not found",
-      });
-    }
+    const newData = getCategoryAuditData(updatedCategory);
+
+    const action =
+      previousData.isActive !== newData.isActive ? "Status Changed" : "Updated";
+
+    await recordAudit({
+      action,
+      entityType: "KnowledgeCategory",
+      entityId: categoryId,
+      performedBy: req.body.performedBy || "System",
+      description:
+        action === "Status Changed"
+          ? `Knowledge category ${categoryId} status changed from ${previousData.isActive ? "Active" : "Inactive"} to ${newData.isActive ? "Active" : "Inactive"}`
+          : `Knowledge category ${categoryId} updated`,
+      previousData,
+      newData,
+    });
 
     return res.status(200).json({
       message: "Knowledge category updated successfully",
@@ -215,10 +255,22 @@ const updateKnowledgeCategory = async (req, res) => {
   }
 };
 
-// 5. Deactivate Knowledge Category
+// 5. Deactivate Knowledge Category (Soft Delete)
 const deleteKnowledgeCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
+
+    const existingCategory = await KnowledgeCategory.findOne({
+      categoryId,
+    });
+
+    if (!existingCategory) {
+      return res.status(404).json({
+        message: "Knowledge category not found",
+      });
+    }
+
+    const previousData = getCategoryAuditData(existingCategory);
 
     const category = await KnowledgeCategory.findOneAndUpdate(
       { categoryId },
@@ -226,9 +278,17 @@ const deleteKnowledgeCategory = async (req, res) => {
       { returnDocument: "after" },
     );
 
-    if (!category) {
-      return res.status(404).json({
-        message: "Knowledge category not found",
+    const newData = getCategoryAuditData(category);
+
+    if (previousData.isActive !== newData.isActive) {
+      await recordAudit({
+        action: "Status Changed",
+        entityType: "KnowledgeCategory",
+        entityId: categoryId,
+        performedBy: req.body?.performedBy || "System",
+        description: `Knowledge category ${categoryId} deactivated`,
+        previousData,
+        newData,
       });
     }
 

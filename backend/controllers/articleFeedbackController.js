@@ -1,5 +1,15 @@
 const ArticleFeedback = require("../models/ArticleFeedback");
 const KnowledgeArticle = require("../models/knowledgeArticle");
+const { createAuditLog } = require("../services/auditService");
+
+// Helper to record audit history without interrupting the main operation
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Article Feedback audit recording failed:", error.message);
+  }
+};
 
 // 1. Submit article feedback
 exports.createFeedback = async (req, res) => {
@@ -27,6 +37,24 @@ exports.createFeedback = async (req, res) => {
     });
 
     await feedback.save();
+
+    // Record audit history
+    await recordAudit({
+      action: "Feedback Submitted",
+      entityType: "ArticleFeedback",
+      entityId: feedback._id.toString(),
+      ticketId: feedback.ticketId || null,
+      performedBy: feedback.submittedBy || "System",
+      description: `Feedback submitted for knowledge article ${articleId}`,
+      newData: {
+        articleId: feedback.articleId,
+        ticketId: feedback.ticketId,
+        rating: feedback.rating,
+        isHelpful: feedback.isHelpful,
+        comments: feedback.comments,
+        submittedBy: feedback.submittedBy,
+      },
+    });
 
     return res.status(201).json({
       message: "Article feedback submitted successfully",
@@ -108,15 +136,35 @@ exports.getFeedbackByTicketId = async (req, res) => {
 // 5. Delete feedback
 exports.deleteFeedback = async (req, res) => {
   try {
-    const feedback = await ArticleFeedback.findByIdAndDelete(
-      req.params.feedbackId,
-    );
+    // Retrieve feedback before deleting it
+    const feedback = await ArticleFeedback.findById(req.params.feedbackId);
 
     if (!feedback) {
       return res.status(404).json({
         message: "Article feedback not found",
       });
     }
+
+    // Delete feedback
+    await ArticleFeedback.findByIdAndDelete(req.params.feedbackId);
+
+    // Record audit history
+    await recordAudit({
+      action: "Deleted",
+      entityType: "ArticleFeedback",
+      entityId: feedback._id.toString(),
+      ticketId: feedback.ticketId || null,
+      performedBy: feedback.submittedBy || "System",
+      description: `Feedback deleted for knowledge article ${feedback.articleId}`,
+      previousData: {
+        articleId: feedback.articleId,
+        ticketId: feedback.ticketId,
+        rating: feedback.rating,
+        isHelpful: feedback.isHelpful,
+        comments: feedback.comments,
+        submittedBy: feedback.submittedBy,
+      },
+    });
 
     return res.status(200).json({
       message: "Article feedback deleted successfully",

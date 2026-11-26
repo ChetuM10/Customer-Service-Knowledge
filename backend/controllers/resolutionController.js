@@ -1,10 +1,26 @@
 const Resolution = require("../models/Resolution");
 const SupportRequest = require("../models/supportRequest");
+const { createAuditLog } = require("../services/auditService");
+
+// Helper to record audit logs without interrupting the main operation
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Resolution audit recording failed:", error.message);
+  }
+};
 
 // 1. Create resolution from an existing LLM-generated ticket resolution
 exports.createResolution = async (req, res) => {
   try {
     const ticketId = Number(req.params.ticketId);
+
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({
+        message: "Invalid ticket ID",
+      });
+    }
 
     const supportRequest = await SupportRequest.findOne({ ticketId });
 
@@ -34,21 +50,34 @@ exports.createResolution = async (req, res) => {
 
     const resolution = new Resolution({
       ticketId,
-
       generatedResolution: supportRequest.resolution.generatedResolution,
-
       troubleshootingSteps: supportRequest.resolution.troubleshootingSteps,
-
       resolutionStatus: supportRequest.resolution.resolutionStatus,
-
       requiresAgent: supportRequest.resolution.requiresAgent,
-
       escalationReason: supportRequest.resolution.escalationReason,
-
       retrievedArticleIds: supportRequest.resolution.retrievedArticleIds,
+
+      // Copy exact article versions used by the LLM
+      retrievedArticleVersions:
+        supportRequest.resolution.retrievedArticleVersions || [],
     });
 
     await resolution.save();
+
+    await recordAudit({
+      action: "Created",
+      entityType: "Resolution",
+      entityId: resolution.resolutionId,
+      ticketId,
+      description: `Resolution ${resolution.resolutionId} created for ticket ${ticketId}`,
+      newData: {
+        resolutionId: resolution.resolutionId,
+        resolutionStatus: resolution.resolutionStatus,
+        requiresAgent: resolution.requiresAgent,
+        retrievedArticleIds: resolution.retrievedArticleIds,
+        retrievedArticleVersions: resolution.retrievedArticleVersions,
+      },
+    });
 
     return res.status(201).json({
       message: "Resolution created successfully",
@@ -86,6 +115,12 @@ exports.getResolutionByTicketId = async (req, res) => {
   try {
     const ticketId = Number(req.params.ticketId);
 
+    if (!Number.isInteger(ticketId) || ticketId <= 0) {
+      return res.status(400).json({
+        message: "Invalid ticket ID",
+      });
+    }
+
     const resolution = await Resolution.findOne({ ticketId });
 
     if (!resolution) {
@@ -110,7 +145,6 @@ exports.updateResolution = async (req, res) => {
   try {
     const { agentResponse, resolutionStatus, resolvedBy } = req.body;
 
-    // Find resolution using custom resolution ID
     const resolution = await Resolution.findOne({
       resolutionId: req.params.resolutionId,
     });
@@ -121,7 +155,6 @@ exports.updateResolution = async (req, res) => {
       });
     }
 
-    // Allowed resolution statuses
     const allowedStatuses = [
       "Generated",
       "NeedsClarification",
@@ -138,7 +171,6 @@ exports.updateResolution = async (req, res) => {
       });
     }
 
-    // Find related support ticket
     const supportRequest = await SupportRequest.findOne({
       ticketId: resolution.ticketId,
     });
@@ -149,28 +181,34 @@ exports.updateResolution = async (req, res) => {
       });
     }
 
-    // Update agent response
+    const previousData = {
+      agentResponse: resolution.agentResponse,
+      resolutionStatus: resolution.resolutionStatus,
+      resolvedBy: resolution.resolvedBy,
+      requiresAgent: resolution.requiresAgent,
+      resolvedAt: resolution.resolvedAt,
+      supportTicketStatus: supportRequest.status,
+    };
+
+    const previousStatus = resolution.resolutionStatus;
+
     if (agentResponse !== undefined) {
       resolution.agentResponse = agentResponse;
     }
 
-    // Update resolution status
     if (resolutionStatus) {
       resolution.resolutionStatus = resolutionStatus;
     }
 
-    // Update agent information
     if (resolvedBy !== undefined) {
       resolution.resolvedBy = resolvedBy;
     }
 
-    // Handle resolved status
     if (resolutionStatus === "Resolved") {
       resolution.resolvedAt = new Date();
       resolution.requiresAgent = false;
     }
 
-    // Handle statuses requiring agent intervention
     if (
       resolutionStatus === "In Progress" ||
       resolutionStatus === "Escalated"
@@ -179,12 +217,10 @@ exports.updateResolution = async (req, res) => {
       resolution.resolvedAt = null;
     }
 
-    // Save Resolution document
     await resolution.save();
 
     // Synchronize embedded resolution details
     supportRequest.resolution.resolutionStatus = resolution.resolutionStatus;
-
     supportRequest.resolution.requiresAgent = resolution.requiresAgent;
 
     // Synchronize overall support ticket status
@@ -200,8 +236,30 @@ exports.updateResolution = async (req, res) => {
       supportRequest.status = "Open";
     }
 
-    // Save SupportRequest document
     await supportRequest.save();
+
+    const newData = {
+      agentResponse: resolution.agentResponse,
+      resolutionStatus: resolution.resolutionStatus,
+      resolvedBy: resolution.resolvedBy,
+      requiresAgent: resolution.requiresAgent,
+      resolvedAt: resolution.resolvedAt,
+      supportTicketStatus: supportRequest.status,
+    };
+
+    const statusChanged = previousStatus !== resolution.resolutionStatus;
+
+    await recordAudit({
+      action: statusChanged ? "Status Changed" : "Updated",
+      entityType: "Resolution",
+      entityId: resolution.resolutionId,
+      ticketId: resolution.ticketId,
+      description: statusChanged
+        ? `Resolution ${resolution.resolutionId} status changed from ${previousStatus} to ${resolution.resolutionStatus}`
+        : `Resolution ${resolution.resolutionId} updated`,
+      previousData,
+      newData,
+    });
 
     return res.status(200).json({
       message: "Resolution updated successfully",

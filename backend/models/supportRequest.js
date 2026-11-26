@@ -1,5 +1,24 @@
 const mongoose = require("mongoose");
 
+// Stores the exact knowledge article version used by the AI.
+const retrievedArticleVersionSchema = new mongoose.Schema(
+  {
+    articleId: {
+      type: String,
+      required: true,
+    },
+
+    versionNumber: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+  },
+  {
+    _id: false,
+  },
+);
+
 const supportRequestSchema = new mongoose.Schema(
   {
     ticketId: {
@@ -107,6 +126,7 @@ const supportRequestSchema = new mongoose.Schema(
         ],
         default: null,
       },
+
       requiresAgent: {
         type: Boolean,
         default: false,
@@ -119,6 +139,12 @@ const supportRequestSchema = new mongoose.Schema(
 
       retrievedArticleIds: {
         type: [String],
+        default: [],
+      },
+
+      // Exact article versions used for resolution generation.
+      retrievedArticleVersions: {
+        type: [retrievedArticleVersionSchema],
         default: [],
       },
 

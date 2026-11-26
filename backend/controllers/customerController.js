@@ -1,20 +1,48 @@
 const Customer = require("../models/customer");
 const Counter = require("../models/counter");
+const { createAuditLog } = require("../services/auditService");
+
+// Safely record audit history without interrupting customer operations
+const recordAudit = async (auditData) => {
+  try {
+    await createAuditLog(auditData);
+  } catch (error) {
+    console.error("Customer audit recording failed:", error.message);
+  }
+};
+
+// Fields captured in audit history
+const getCustomerAuditData = (customer) => ({
+  customerId: customer.customerId,
+  fullName: customer.fullName,
+  email: customer.email,
+  phone: customer.phone,
+  companyName: customer.companyName,
+  servicePlan: customer.servicePlan,
+  accountStatus: customer.accountStatus,
+});
 
 // Create a customer
 const createCustomer = async (req, res) => {
   try {
-    // Generate the next customer ID
     const counter = await Counter.findByIdAndUpdate(
       "customerId",
       { $inc: { seq: 1 } },
       { new: true },
     );
 
-    // Create customer with generated ID
     const customer = await Customer.create({
       ...req.body,
       customerId: counter.seq,
+    });
+
+    await recordAudit({
+      action: "Created",
+      entityType: "Customer",
+      entityId: String(customer.customerId),
+      performedBy: req.body.performedBy || "System",
+      description: `Customer ${customer.customerId} created`,
+      newData: getCustomerAuditData(customer),
     });
 
     res.status(201).json({
@@ -41,7 +69,6 @@ const getCustomers = async (req, res) => {
   }
 };
 
-// Get customer by ID
 // Get customer by custom customer ID
 const getCustomerById = async (req, res) => {
   try {
@@ -64,23 +91,44 @@ const getCustomerById = async (req, res) => {
 };
 
 // Update customer
-// Update customer using custom customer ID
 const updateCustomer = async (req, res) => {
   try {
-    const customer = await Customer.findOneAndUpdate(
-      { customerId: Number(req.params.id) },
-      req.body,
-      {
-        returnDocument: "after",
-        runValidators: true,
-      },
-    );
+    const customerId = Number(req.params.id);
 
-    if (!customer) {
+    const existingCustomer = await Customer.findOne({ customerId });
+
+    if (!existingCustomer) {
       return res.status(404).json({
         message: "Customer not found",
       });
     }
+
+    const previousData = getCustomerAuditData(existingCustomer);
+
+    const customer = await Customer.findOneAndUpdate({ customerId }, req.body, {
+      returnDocument: "after",
+      runValidators: true,
+    });
+
+    const newData = getCustomerAuditData(customer);
+
+    const action =
+      previousData.accountStatus !== newData.accountStatus
+        ? "Status Changed"
+        : "Updated";
+
+    await recordAudit({
+      action,
+      entityType: "Customer",
+      entityId: String(customer.customerId),
+      performedBy: req.body.performedBy || "System",
+      description:
+        action === "Status Changed"
+          ? `Customer ${customer.customerId} account status changed from ${previousData.accountStatus} to ${newData.accountStatus}`
+          : `Customer ${customer.customerId} updated`,
+      previousData,
+      newData,
+    });
 
     res.status(200).json({
       message: "Customer updated successfully",
@@ -94,7 +142,6 @@ const updateCustomer = async (req, res) => {
 };
 
 // Delete customer
-// Delete customer using custom customer ID
 const deleteCustomer = async (req, res) => {
   try {
     const customer = await Customer.findOneAndDelete({
@@ -106,6 +153,15 @@ const deleteCustomer = async (req, res) => {
         message: "Customer not found",
       });
     }
+
+    await recordAudit({
+      action: "Deleted",
+      entityType: "Customer",
+      entityId: String(customer.customerId),
+      performedBy: req.body?.performedBy || "System",
+      description: `Customer ${customer.customerId} deleted`,
+      previousData: getCustomerAuditData(customer),
+    });
 
     res.status(200).json({
       message: "Customer deleted successfully",

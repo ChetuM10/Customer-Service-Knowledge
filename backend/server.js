@@ -8,13 +8,11 @@ const customerRoutes = require("./routes/customerRoutes");
 const supportRequestRoutes = require("./routes/supportRequestRoutes");
 const knowledgeCategoryRoutes = require("./routes/knowledgeCategoryRoutes");
 const knowledgeArticleRoutes = require("./routes/knowledgeArticleRoutes");
-
 const resolutionRoutes = require("./routes/resolutionRoutes");
-
 const articleFeedbackRoutes = require("./routes/articleFeedbackRoutes");
-
 const knowledgeGapRoutes = require("./routes/knowledgeGapRoutes");
-
+const analyticsRoutes = require("./routes/analyticsRoutes");
+const auditLogRoutes = require("./routes/auditLogRoutes");
 const app = express();
 
 app.use(cors());
@@ -33,6 +31,8 @@ app.use("/api/knowledge-articles", knowledgeArticleRoutes);
 app.use("/api/resolutions", resolutionRoutes);
 app.use("/api/article-feedback", articleFeedbackRoutes);
 app.use("/api/knowledge-gaps", knowledgeGapRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/audit-logs", auditLogRoutes);
 
 const startServer = async () => {
   await connectDB();
