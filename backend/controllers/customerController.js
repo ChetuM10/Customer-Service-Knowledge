@@ -1,4 +1,4 @@
-const Customer = require("../models/customer");
+const Customer = require("../models/Customer");
 const Counter = require("../models/counter");
 const { createAuditLog } = require("../services/auditService");
 

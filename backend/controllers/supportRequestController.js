@@ -1,5 +1,5 @@
 const SupportRequest = require("../models/supportRequest");
-const Customer = require("../models/customer");
+const Customer = require("../models/Customer");
 const Counter = require("../models/counter");
 
 const { classifyIssue } = require("../services/classificationEngine.cjs");
