@@ -2,10 +2,13 @@ import { useState, useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 const NAV_ITEMS = [
+  { path: "/analytics", label: "Analytics", icon: "analytics" },
   { path: "/customers", label: "Customers", icon: "person" },
   { path: "/tickets", label: "Support Tickets", icon: "confirmation_number" },
   { path: "/categories", label: "Categories", icon: "category" },
   { path: "/articles", label: "Knowledge Articles", icon: "menu_book" },
+  { path: "/gaps", label: "Knowledge Gaps", icon: "lightbulb" },
+  { path: "/audit-logs", label: "Audit History", icon: "history" },
 ];
 
 export default function Layout() {
