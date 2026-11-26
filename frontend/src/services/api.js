@@ -24,6 +24,7 @@ export const ticketAPI = {
     create: (data) => api.post('/support-requests', data),
     update: (ticketId, data) => api.put(`/support-requests/${ticketId}`, data),
     delete: (ticketId) => api.delete(`/support-requests/${ticketId}`),
+    generateResolution: (ticketId) => api.post(`/support-requests/${ticketId}/generate-resolution`),
 };
 
 // 3. Knowledge Category Management (/api/knowledge-categories)
@@ -47,6 +48,45 @@ export const articleAPI = {
     getVersions: (articleId) => api.get(`/knowledge-articles/${articleId}/versions`),
     getVersion: (articleId, versionNumber) =>
         api.get(`/knowledge-articles/${articleId}/versions/${versionNumber}`),
+};
+
+// 5. Resolution Management (/api/resolutions)
+export const resolutionAPI = {
+    create: (ticketId, data) => api.post(`/resolutions/${ticketId}`, data),
+    getAll: () => api.get('/resolutions'),
+    getByTicket: (ticketId) => api.get(`/resolutions/ticket/${ticketId}`),
+    update: (resolutionId, data) => api.put(`/resolutions/${resolutionId}`, data),
+};
+
+// 6. Article Feedback Management (/api/article-feedback)
+export const feedbackAPI = {
+    create: (data) => api.post('/article-feedback', data),
+    getAll: () => api.get('/article-feedback'),
+    getByArticle: (articleId) => api.get(`/article-feedback/article/${articleId}`),
+    getByTicket: (ticketId) => api.get(`/article-feedback/ticket/${ticketId}`),
+    delete: (feedbackId) => api.delete(`/article-feedback/${feedbackId}`),
+};
+
+// 7. Knowledge Gap Management (/api/knowledge-gaps)
+export const gapAPI = {
+    create: (data) => api.post('/knowledge-gaps', data),
+    getAll: () => api.get('/knowledge-gaps'),
+    getById: (gapId) => api.get(`/knowledge-gaps/${gapId}`),
+    update: (gapId, data) => api.put(`/knowledge-gaps/${gapId}`, data),
+    delete: (gapId) => api.delete(`/knowledge-gaps/${gapId}`),
+};
+
+// 8. Knowledge Analytics (/api/analytics)
+export const analyticsAPI = {
+    getDashboard: () => api.get('/analytics/dashboard'),
+};
+
+// 9. Audit History (/api/audit-logs)
+export const auditAPI = {
+    getAll: () => api.get('/audit-logs'),
+    getByTicket: (ticketId) => api.get(`/audit-logs/ticket/${ticketId}`),
+    getByEntity: (entityType) => api.get(`/audit-logs/entity/${entityType}`),
+    getById: (auditId) => api.get(`/audit-logs/${auditId}`),
 };
 
 export default api;

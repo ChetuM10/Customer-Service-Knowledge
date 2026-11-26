@@ -38,5 +38,8 @@ venv/
 __pycache__/
 *.pyc
 
+# Local study & revision notes
+Study/
+
 
 
