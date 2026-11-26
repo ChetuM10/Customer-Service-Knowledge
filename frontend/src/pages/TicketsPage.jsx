@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ticketAPI, customerAPI } from '../services/api';
+import { ticketAPI, customerAPI, resolutionAPI, feedbackAPI } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
 
 const EMPTY_CREATE_FORM = {
@@ -10,6 +10,15 @@ const EMPTY_CREATE_FORM = {
   channel: 'Web',
 };
 
+const RESOLUTION_STATUSES = [
+  'Generated',
+  'NeedsClarification',
+  'Escalated',
+  'In Progress',
+  'Resolved',
+  'Rejected',
+];
+
 export default function TicketsPage() {
   const [tickets, setTickets] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -17,15 +26,35 @@ export default function TicketsPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
-  // Create / Edit Modal State
+  // Create / Edit Ticket Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTicketId, setEditingTicketId] = useState(null);
   const [formData, setFormData] = useState(EMPTY_CREATE_FORM);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // ML Details Modal State
+  // ML Breakdown Modal
   const [selectedTicket, setSelectedTicket] = useState(null);
+
+  // AI Resolution, Resolution Management & Feedback Modal (Modules 7, 8, 9)
+  const [resModalTicket, setResModalTicket] = useState(null);
+  const [generatingAI, setGeneratingAI] = useState(false);
+  const [savedResolution, setSavedResolution] = useState(null);
+  const [resLoading, setResLoading] = useState(false);
+  const [resForm, setResForm] = useState({ agentResponse: '', resolutionStatus: 'In Progress', resolvedBy: '' });
+  const [resSaving, setResSaving] = useState(false);
+  const [autoGapNotice, setAutoGapNotice] = useState(null);
+
+  // Article Feedback State (Module 9)
+  const [ticketFeedback, setTicketFeedback] = useState([]);
+  const [fbForm, setFbForm] = useState({
+    articleId: '',
+    rating: 5,
+    isHelpful: true,
+    comments: '',
+    submittedBy: 'Agent',
+  });
+  const [fbSaving, setFbSaving] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -114,8 +143,132 @@ export default function TicketsPage() {
       await ticketAPI.delete(ticketId);
       setTickets((prev) => prev.filter((t) => t.ticketId !== ticketId));
       if (selectedTicket?.ticketId === ticketId) setSelectedTicket(null);
+      if (resModalTicket?.ticketId === ticketId) setResModalTicket(null);
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to delete support ticket.');
+    }
+  };
+
+  // Open AI Resolution + Feedback Modal for a ticket
+  const openResolutionModal = async (ticket) => {
+    setResModalTicket(ticket);
+    setAutoGapNotice(null);
+    setResLoading(true);
+    setSavedResolution(null);
+
+    const firstArticle = ticket.resolution?.retrievedArticleIds?.[0] || '';
+    setFbForm({ articleId: firstArticle, rating: 5, isHelpful: true, comments: '', submittedBy: 'Agent' });
+
+    try {
+      const [resResult, fbResult] = await Promise.allSettled([
+        resolutionAPI.getByTicket(ticket.ticketId),
+        feedbackAPI.getByTicket(ticket.ticketId),
+      ]);
+
+      if (resResult.status === 'fulfilled') {
+        const existing = resResult.value.data?.resolution;
+        setSavedResolution(existing);
+        setResForm({
+          agentResponse: existing.agentResponse || '',
+          resolutionStatus: existing.resolutionStatus || 'In Progress',
+          resolvedBy: existing.resolvedBy || '',
+        });
+      } else {
+        setResForm({ agentResponse: '', resolutionStatus: 'In Progress', resolvedBy: '' });
+      }
+
+      if (fbResult.status === 'fulfilled') {
+        setTicketFeedback(fbResult.value.data?.feedback || []);
+      } else {
+        setTicketFeedback([]);
+      }
+    } finally {
+      setResLoading(false);
+    }
+  };
+
+  // Module 7: Generate AI Solution Recommendation
+  const handleGenerateAI = async () => {
+    if (!resModalTicket) return;
+    setGeneratingAI(true);
+    setAutoGapNotice(null);
+    try {
+      const res = await ticketAPI.generateResolution(resModalTicket.ticketId);
+      const updatedResolution = res.data?.resolution;
+      setResModalTicket((prev) => ({ ...prev, resolution: updatedResolution }));
+      setTickets((prev) =>
+        prev.map((t) => (t.ticketId === resModalTicket.ticketId ? { ...t, resolution: updatedResolution } : t))
+      );
+      if (res.data?.knowledgeGap) {
+        setAutoGapNotice(res.data.knowledgeGap.gapId);
+      }
+      if (updatedResolution?.retrievedArticleIds?.[0]) {
+        setFbForm((prev) => ({ ...prev, articleId: updatedResolution.retrievedArticleIds[0] }));
+      }
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to generate AI resolution.');
+    } finally {
+      setGeneratingAI(false);
+    }
+  };
+
+  // Module 8: Save AI recommendation into Resolution collection
+  const handleCreateResolutionRecord = async () => {
+    if (!resModalTicket) return;
+    setResSaving(true);
+    try {
+      const res = await resolutionAPI.create(resModalTicket.ticketId, {});
+      const created = res.data?.resolution;
+      setSavedResolution(created);
+      setResForm({
+        agentResponse: created.agentResponse || '',
+        resolutionStatus: created.resolutionStatus || 'In Progress',
+        resolvedBy: created.resolvedBy || '',
+      });
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to save resolution record.');
+    } finally {
+      setResSaving(false);
+    }
+  };
+
+  // Module 8: Update Resolution status & agent response
+  const handleUpdateResolution = async (e) => {
+    e.preventDefault();
+    if (!savedResolution) return;
+    setResSaving(true);
+    try {
+      const res = await resolutionAPI.update(savedResolution.resolutionId, resForm);
+      setSavedResolution(res.data?.resolution);
+      await fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update resolution.');
+    } finally {
+      setResSaving(false);
+    }
+  };
+
+  // Module 9: Submit Article Feedback
+  const handleSubmitFeedback = async (e) => {
+    e.preventDefault();
+    if (!resModalTicket || !fbForm.articleId) return;
+    setFbSaving(true);
+    try {
+      await feedbackAPI.create({
+        articleId: fbForm.articleId,
+        ticketId: resModalTicket.ticketId,
+        rating: Number(fbForm.rating),
+        isHelpful: fbForm.isHelpful,
+        comments: fbForm.comments,
+        submittedBy: fbForm.submittedBy || 'Support Agent',
+      });
+      const fbRes = await feedbackAPI.getByTicket(resModalTicket.ticketId);
+      setTicketFeedback(fbRes.data?.feedback || []);
+      setFbForm((prev) => ({ ...prev, comments: '' }));
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to submit feedback.');
+    } finally {
+      setFbSaving(false);
     }
   };
 
@@ -216,7 +369,7 @@ export default function TicketsPage() {
                         ID: #{t.customer?.customerId ?? '—'}
                       </div>
                     </td>
-                    <td style={{ maxWidth: '240px' }}>
+                    <td style={{ maxWidth: '220px' }}>
                       <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {t.subject}
                       </div>
@@ -229,6 +382,14 @@ export default function TicketsPage() {
                     <td><StatusBadge label={t.status} /></td>
                     <td style={{ color: 'var(--text-secondary)' }}>{t.channel}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button
+                        className="btn"
+                        title="AI Resolution & Feedback"
+                        onClick={() => openResolutionModal(t)}
+                        style={{ marginRight: '6px', padding: '5px 10px' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#22c55e' }}>auto_awesome</span>
+                      </button>
                       <button
                         className="btn"
                         title="View ML Breakdown"
@@ -375,7 +536,7 @@ export default function TicketsPage() {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
                 <button type="button" className="btn" onClick={() => setIsModalOpen(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? 'Running ML & Saving...' : editingTicketId === null ? 'Submit Ticket' : 'Save Changes'}
+                  {saving ? 'Classifying & Saving...' : editingTicketId === null ? 'Submit Ticket' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -451,8 +612,234 @@ export default function TicketsPage() {
                 </div>
               ) : (
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  No probability breakdown available (ML service may have been offline).
+                  No probability breakdown available.
                 </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Resolution, Resolution Management & Article Feedback Modal (Modules 7, 8, 9) */}
+      {resModalTicket && (
+        <div className="modal-backdrop" onClick={() => setResModalTicket(null)}>
+          <div className="modal-content" style={{ maxWidth: '680px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 600 }}>
+                  Ticket #{resModalTicket.ticketId} — AI Resolution &amp; Feedback
+                </h2>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {resModalTicket.subject}
+                </p>
+              </div>
+              <button className="btn" onClick={() => setResModalTicket(null)} style={{ padding: '4px 8px' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
+              </button>
+            </div>
+
+            {autoGapNotice && (
+              <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(234,179,8,0.12)', color: 'var(--accent)', fontSize: '13px', marginBottom: '14px' }}>
+                No matching published article was found. Knowledge Gap <strong>{autoGapNotice}</strong> was automatically logged!
+              </div>
+            )}
+
+            {/* Section A: Module 7 — AI Recommendation */}
+            <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600 }}>1. AI Solution Recommendation</h3>
+                <button className="btn btn-primary" onClick={handleGenerateAI} disabled={generatingAI}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>auto_awesome</span>
+                  {generatingAI ? 'Generating...' : resModalTicket.resolution?.generatedResolution ? 'Regenerate AI' : 'Generate AI Resolution'}
+                </button>
+              </div>
+
+              {resModalTicket.resolution?.generatedResolution ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
+                  <p style={{ lineHeight: 1.5 }}>{resModalTicket.resolution.generatedResolution}</p>
+
+                  {resModalTicket.resolution.troubleshootingSteps?.length > 0 && (
+                    <div>
+                      <strong style={{ color: 'var(--text-secondary)' }}>Troubleshooting Steps:</strong>
+                      <ol style={{ paddingLeft: '18px', marginTop: '4px', color: 'var(--text-secondary)' }}>
+                        {resModalTicket.resolution.troubleshootingSteps.map((step, i) => (
+                          <li key={i} style={{ marginBottom: '3px' }}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                    <StatusBadge label={resModalTicket.resolution.resolutionStatus} />
+                    {resModalTicket.resolution.requiresAgent && (
+                      <StatusBadge label="Needs agent review" />
+                    )}
+                    {resModalTicket.resolution.retrievedArticleIds?.length > 0 && (
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        Matched Articles: {resModalTicket.resolution.retrievedArticleIds.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  No AI recommendation generated yet. Click <strong>Generate AI Resolution</strong> above.
+                </p>
+              )}
+            </div>
+
+            {/* Section B: Module 8 — Resolution Management */}
+            <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>2. Resolution Tracking</h3>
+
+              {resLoading ? (
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Checking resolution record...</p>
+              ) : !savedResolution ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Save the AI recommendation as an official Resolution record to track agent progress.
+                  </p>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleCreateResolutionRecord}
+                    disabled={resSaving || !resModalTicket.resolution?.generatedResolution}
+                  >
+                    {resSaving ? 'Saving...' : 'Save Resolution'}
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleUpdateResolution}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                    <span>Resolution ID: <strong style={{ color: 'var(--accent)' }}>{savedResolution.resolutionId}</strong></span>
+                    <StatusBadge label={savedResolution.resolutionStatus} />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Resolution Status</label>
+                      <select
+                        className="form-select"
+                        value={resForm.resolutionStatus}
+                        onChange={(e) => setResForm((p) => ({ ...p, resolutionStatus: e.target.value }))}
+                      >
+                        {RESOLUTION_STATUSES.map((st) => (
+                          <option key={st} value={st}>{st}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Resolved By</label>
+                      <input
+                        className="form-input"
+                        placeholder="Agent name"
+                        value={resForm.resolvedBy}
+                        onChange={(e) => setResForm((p) => ({ ...p, resolvedBy: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Agent Response / Notes</label>
+                    <textarea
+                      className="form-textarea"
+                      rows={2}
+                      placeholder="Final resolution notes sent to customer..."
+                      value={resForm.agentResponse}
+                      onChange={(e) => setResForm((p) => ({ ...p, agentResponse: e.target.value }))}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button type="submit" className="btn btn-primary" disabled={resSaving}>
+                      {resSaving ? 'Updating...' : 'Update Resolution'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            {/* Section C: Module 9 — Article Feedback */}
+            <div className="card" style={{ padding: '16px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>3. Article Feedback</h3>
+
+              <form onSubmit={handleSubmitFeedback} style={{ marginBottom: ticketFeedback.length > 0 ? '14px' : 0 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 120px', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Article ID *</label>
+                    <input
+                      className="form-input"
+                      placeholder="e.g. ART1001"
+                      value={fbForm.articleId}
+                      onChange={(e) => setFbForm((p) => ({ ...p, articleId: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Rating (1–5)</label>
+                    <select
+                      className="form-select"
+                      value={fbForm.rating}
+                      onChange={(e) => setFbForm((p) => ({ ...p, rating: Number(e.target.value) }))}
+                    >
+                      {[5, 4, 3, 2, 1].map((n) => (
+                        <option key={n} value={n}>{n} ★</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Helpful?</label>
+                    <select
+                      className="form-select"
+                      value={String(fbForm.isHelpful)}
+                      onChange={(e) => setFbForm((p) => ({ ...p, isHelpful: e.target.value === 'true' }))}
+                    >
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Comments</label>
+                    <input
+                      className="form-input"
+                      placeholder="Was the article accurate?"
+                      value={fbForm.comments}
+                      onChange={(e) => setFbForm((p) => ({ ...p, comments: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Submitted By</label>
+                    <select
+                      className="form-select"
+                      value={fbForm.submittedBy}
+                      onChange={(e) => setFbForm((p) => ({ ...p, submittedBy: e.target.value }))}
+                    >
+                      <option value="Agent">Agent</option>
+                      <option value="Customer">Customer</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" className="btn btn-primary" disabled={fbSaving}>
+                    {fbSaving ? 'Submitting...' : 'Submit Feedback'}
+                  </button>
+                </div>
+              </form>
+
+              {ticketFeedback.length > 0 && (
+                <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {ticketFeedback.map((fb) => (
+                    <div key={fb._id} style={{ fontSize: '12.5px', display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
+                      <span>
+                        <strong style={{ color: 'var(--accent)' }}>{fb.articleId}</strong> — {fb.rating}/5 ★ ({fb.isHelpful ? 'Helpful' : 'Not helpful'}) {fb.comments ? `• "${fb.comments}"` : ''}
+                      </span>
+                      <span>by {fb.submittedBy || 'Anonymous'}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
