@@ -1,5 +1,24 @@
 const mongoose = require("mongoose");
 
+// Stores the exact knowledge article version used by the AI.
+const retrievedArticleVersionSchema = new mongoose.Schema(
+  {
+    articleId: {
+      type: String,
+      required: true,
+    },
+
+    versionNumber: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+  },
+  {
+    _id: false,
+  },
+);
+
 const supportRequestSchema = new mongoose.Schema(
   {
     ticketId: {
@@ -26,7 +45,6 @@ const supportRequestSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ML classification fields
     category: {
       type: String,
       enum: [
@@ -82,10 +100,65 @@ const supportRequestSchema = new mongoose.Schema(
       enum: ["Web", "Email", "Phone"],
       default: "Web",
     },
+
+    // AI-generated resolution
+    resolution: {
+      generatedResolution: {
+        type: String,
+        default: null,
+      },
+
+      troubleshootingSteps: {
+        type: [String],
+        default: [],
+      },
+
+      resolutionStatus: {
+        type: String,
+        enum: [
+          "Generated",
+          "NeedsClarification",
+          "Escalated",
+          "In Progress",
+          "Resolved",
+          "Rejected",
+          null,
+        ],
+        default: null,
+      },
+
+      requiresAgent: {
+        type: Boolean,
+        default: false,
+      },
+
+      escalationReason: {
+        type: String,
+        default: null,
+      },
+
+      retrievedArticleIds: {
+        type: [String],
+        default: [],
+      },
+
+      // Exact article versions used for resolution generation.
+      retrievedArticleVersions: {
+        type: [retrievedArticleVersionSchema],
+        default: [],
+      },
+
+      generatedAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
   },
 );
 
-module.exports = mongoose.model("SupportRequest", supportRequestSchema);
+module.exports =
+  mongoose.models.SupportRequest ||
+  mongoose.model("SupportRequest", supportRequestSchema);

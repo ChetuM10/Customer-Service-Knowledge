@@ -8,6 +8,7 @@ const {
   getSupportRequestById,
   updateSupportRequest,
   deleteSupportRequest,
+  generateTicketResolution,
 } = require("../controllers/supportRequestController");
 
 // Create support ticket
@@ -24,5 +25,8 @@ router.put("/:ticketId", updateSupportRequest);
 
 // Delete support ticket
 router.delete("/:ticketId", deleteSupportRequest);
+
+// Generate AI resolution for a support ticket
+router.post("/:ticketId/generate-resolution", generateTicketResolution);
 
 module.exports = router;
