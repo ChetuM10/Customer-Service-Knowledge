@@ -15,6 +15,7 @@ export default function Layout() {
   const [theme, setTheme] = useState(
     () => localStorage.getItem("theme") || "dark",
   );
+  const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
 
   // Sync theme to <html data-theme="..."> and save in localStorage
@@ -35,39 +36,58 @@ export default function Layout() {
       {/* Sidebar */}
       <aside
         style={{
-          width: "250px",
+          width: collapsed ? "72px" : "250px",
           backgroundColor: "var(--bg-sidebar)",
           borderRight: "1px solid var(--border-color)",
-          padding: "20px 14px",
+          padding: collapsed ? "20px 10px" : "20px 14px",
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
+          overflow: "hidden",
+          transition: "width 0.2s ease, padding 0.2s ease",
         }}
       >
-        {/* Brand */}
+        {/* Brand + Collapse Toggle */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: collapsed ? "center" : "space-between",
             gap: "10px",
-            padding: "0 10px 18px",
+            padding: collapsed ? "0 0 18px" : "0 6px 18px 10px",
             borderBottom: "1px solid var(--border-color)",
           }}
         >
-          <span
-            className="material-symbols-outlined"
-            style={{ color: "var(--accent)", fontSize: "26px" }}
+          {!collapsed && (
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+              <span
+                className="material-symbols-outlined"
+                style={{ color: "var(--accent)", fontSize: "26px", flexShrink: 0 }}
+              >
+                support_agent
+              </span>
+              <div style={{ whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: "15px", fontWeight: 700 }}>
+                  Resolution Hub
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                  Knowledge Platform
+                </div>
+              </div>
+            </div>
+          )}
+
+          <button
+            className="btn"
+            onClick={() => setCollapsed((prev) => !prev)}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            style={{ padding: "6px", flexShrink: 0 }}
           >
-            support_agent
-          </span>
-          <div>
-            <div style={{ fontSize: "15px", fontWeight: 700 }}>
-              Resolution Hub
-            </div>
-            <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-              Knowledge Platform
-            </div>
-          </div>
+            <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>
+              {collapsed ? "chevron_right" : "chevron_left"}
+            </span>
+          </button>
         </div>
 
         {/* Navigation Links */}
@@ -83,15 +103,18 @@ export default function Layout() {
             <NavLink
               key={item.path}
               to={item.path}
+              title={collapsed ? item.label : undefined}
               style={({ isActive }) => ({
                 display: "flex",
                 alignItems: "center",
+                justifyContent: collapsed ? "center" : "flex-start",
                 gap: "10px",
-                padding: "10px 12px",
+                padding: collapsed ? "10px" : "10px 12px",
                 borderRadius: "8px",
                 textDecoration: "none",
                 fontSize: "13.5px",
                 fontWeight: isActive ? 600 : 500,
+                whiteSpace: "nowrap",
                 color: isActive ? "var(--accent)" : "var(--text-secondary)",
                 backgroundColor: isActive
                   ? "var(--accent-soft)"
@@ -104,11 +127,11 @@ export default function Layout() {
             >
               <span
                 className="material-symbols-outlined"
-                style={{ fontSize: "19px" }}
+                style={{ fontSize: "19px", flexShrink: 0 }}
               >
                 {item.icon}
               </span>
-              <span>{item.label}</span>
+              {!collapsed && <span>{item.label}</span>}
             </NavLink>
           ))}
         </nav>
